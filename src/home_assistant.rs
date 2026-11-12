@@ -15,7 +15,7 @@ pub struct MqttSettings {
     pub host: String,
     pub port: u16,
     pub username: String,
-    pub password: String,
+    pub password: Option<String>,
 }
 
 pub async fn run(
@@ -24,7 +24,9 @@ pub async fn run(
     requests: UnboundedSender<PowerState>,
 ) {
     let mut options = MqttOptions::new("led-lantern", settings.host, settings.port);
-    options.set_credentials(settings.username, settings.password);
+    if let Some(password) = settings.password {
+        options.set_credentials(settings.username, password);
+    }
     options.set_keep_alive(Duration::from_secs(30));
     options.set_last_will(LastWill::new(
         AVAILABILITY_TOPIC,

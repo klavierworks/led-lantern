@@ -25,10 +25,12 @@ impl PowerState {
     }
 }
 
-pub fn load(path: &Path) -> PowerState {
+pub fn load(path: &Path) -> Result<PowerState> {
     match std::fs::read_to_string(path) {
-        Ok(saved) if saved.trim() == "off" => PowerState::Off,
-        _ => PowerState::On,
+        Ok(saved) if saved.trim() == "off" => Ok(PowerState::Off),
+        Ok(_) => Ok(PowerState::On),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(PowerState::On),
+        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
     }
 }
 
@@ -53,6 +55,9 @@ mod tests {
 
     #[test]
     fn missing_file_means_on() {
-        assert_eq!(load(Path::new("/nonexistent/power-state")), PowerState::On);
+        assert_eq!(
+            load(Path::new("/nonexistent/power-state")).unwrap(),
+            PowerState::On
+        );
     }
 }

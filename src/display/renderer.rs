@@ -95,42 +95,54 @@ fn drive(
 
     loop {
         let frame_started = Instant::now();
-        loop {
-            match commands.try_recv() {
-                Ok(RenderCommand::Show(command)) => {
-                    *latest = command.clone();
-                    playing = start(font, command);
-                }
-                Ok(RenderCommand::SetPower(PowerState::Off)) => return Stop::PowerOff,
-                Ok(RenderCommand::SetPower(PowerState::On)) => {}
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return Stop::Shutdown,
-            }
+        if let Some(stop) = apply_pending_commands(font, commands, &mut playing, latest) {
+            return stop;
         }
-
-        let elapsed = playing.started.elapsed();
-        match &mut playing.program {
-            Program::Blank => panel.show(&blank),
-            Program::Text(scroll) => {
-                panel.show(&scroll.frame_at(font, elapsed));
-                let passes = scroll.passes_completed(elapsed);
-                if passes > playing.passes_reported
-                    && let Some(play_id) = playing.play_id
-                {
-                    playing.passes_reported = passes;
-                    if finished_passes.send(play_id).is_err() {
-                        return Stop::Shutdown;
-                    }
-                }
-            }
-            Program::Announcement(announcement) => {
-                panel.show(&announcement.frame_at(font, elapsed))
-            }
-            Program::Video(video) => panel.show(video.latest_frame()),
+        if let Some(play_id) = draw(font, &mut panel, &blank, &mut playing)
+            && finished_passes.send(play_id).is_err()
+        {
+            return Stop::Shutdown;
         }
-
         thread::sleep((Duration::from_secs(1) / 60).saturating_sub(frame_started.elapsed()));
     }
+}
+
+fn apply_pending_commands(
+    font: &Font,
+    commands: &Receiver<RenderCommand>,
+    playing: &mut Playing,
+    latest: &mut Command,
+) -> Option<Stop> {
+    loop {
+        match commands.try_recv() {
+            Ok(RenderCommand::Show(command)) => {
+                *latest = command.clone();
+                *playing = start(font, command);
+            }
+            Ok(RenderCommand::SetPower(PowerState::Off)) => return Some(Stop::PowerOff),
+            Ok(RenderCommand::SetPower(PowerState::On)) => {}
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => return Some(Stop::Shutdown),
+        }
+    }
+}
+
+fn draw(font: &Font, panel: &mut Panel, blank: &Frame, playing: &mut Playing) -> Option<u64> {
+    let elapsed = playing.started.elapsed();
+    match &mut playing.program {
+        Program::Blank => panel.show(blank),
+        Program::Announcement(announcement) => panel.show(&announcement.frame_at(font, elapsed)),
+        Program::Video(video) => panel.show(video.latest_frame()),
+        Program::Text(scroll) => {
+            panel.show(&scroll.frame_at(font, elapsed));
+            let passes = scroll.passes_completed(elapsed);
+            if passes > playing.passes_reported {
+                playing.passes_reported = passes;
+                return playing.play_id;
+            }
+        }
+    }
+    None
 }
 
 fn start(font: &Font, command: Command) -> Playing {
