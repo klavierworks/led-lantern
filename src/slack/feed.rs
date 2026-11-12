@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -10,8 +9,9 @@ use super::api::{HISTORY_LIMIT, Message, SlackApi};
 use super::markup::{mentioned_user_ids, plain_text};
 use super::message::{announcement_text, is_showable, timestamp, youtube_url};
 use super::socket_mode::{self, SocketEvent};
-use crate::entry::{Content, Entry, VideoSource, unix_now};
+use crate::entry::{Content, Entry, unix_now};
 use crate::schedule::ScheduleEvent;
+use crate::video_download;
 use crate::youtube::YtDlp;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -37,7 +37,6 @@ struct Feed {
     events: UnboundedSender<ScheduleEvent>,
     started_at: f64,
     user_names: HashMap<String, String>,
-    video_files: HashMap<String, PathBuf>,
     seen: HashSet<String>,
     tracked: HashMap<String, Tracked>,
     direct_message_channels: HashSet<String>,
@@ -56,7 +55,6 @@ pub async fn run(
         events,
         started_at: unix_now(),
         user_names: HashMap::new(),
-        video_files: HashMap::new(),
         seen: HashSet::new(),
         tracked: HashMap::new(),
         direct_message_channels: HashSet::new(),
@@ -199,7 +197,8 @@ impl Feed {
         }
         let entry = self.entry_for(message, channel).await?;
         self.track(channel, message, entry.timestamp);
-        self.send(ScheduleEvent::Arrive(entry));
+        self.send(ScheduleEvent::Arrive(entry.clone()));
+        self.start_download(entry);
         Ok(())
     }
 
@@ -241,7 +240,8 @@ impl Feed {
                     if let Some(tracked) = self.tracked.get_mut(&key) {
                         tracked.raw_text = message.text.clone();
                     }
-                    self.send(ScheduleEvent::Update(entry));
+                    self.send(ScheduleEvent::Update(entry.clone()));
+                    self.start_download(entry);
                 }
                 Some(_) => {}
             }
@@ -255,10 +255,7 @@ impl Feed {
         let content = if let Some(announcement) = announcement_text(&text) {
             Content::Announcement(announcement)
         } else if let Some(url) = youtube_url(&message.text) {
-            self.video_content(&url).await.unwrap_or_else(|error| {
-                warn!("Downloading {url} failed, showing the message text instead: {error:#}");
-                Content::Text(text)
-            })
+            video_download::initial_content(&self.yt_dlp, &url)
         } else {
             Content::Text(text)
         };
@@ -267,22 +264,6 @@ impl Feed {
             timestamp: timestamp(&message.ts)?,
             content,
         })
-    }
-
-    async fn video_content(&mut self, url: &str) -> Result<Content> {
-        let path = match self.video_files.get(url) {
-            Some(path) => path.clone(),
-            None => {
-                info!("Downloading {url}");
-                let path = self.yt_dlp.download(url).await?;
-                self.video_files.insert(url.to_string(), path.clone());
-                path
-            }
-        };
-        Ok(Content::Video(VideoSource {
-            input: path.display().to_string(),
-            is_live: false,
-        }))
     }
 
     async fn resolve_user_names(&mut self, raw_text: &str) {
@@ -309,6 +290,10 @@ impl Feed {
                 raw_text: message.text.clone(),
             },
         );
+    }
+
+    fn start_download(&self, entry: Entry) {
+        video_download::spawn(self.yt_dlp.clone(), entry, self.events.clone());
     }
 
     fn send(&self, event: ScheduleEvent) {

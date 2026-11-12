@@ -94,7 +94,7 @@ impl Scheduler {
             .iter()
             .position(|fallback| fallback.key == entry.key)
         {
-            if entry.is_announcement() {
+            if entry.is_announcement() || entry.is_interruptible() {
                 self.fallbacks.remove(index);
             } else {
                 self.fallbacks[index] = entry.clone();
@@ -114,11 +114,13 @@ impl Scheduler {
             (Content::Text(_), Content::Text(_))
         );
         let content = entry.content.clone();
+        let is_interruptible = entry.is_interruptible();
         self.current = Some(entry);
         if is_text_edit {
             self.has_pending_edit = true;
             return None;
         }
+        self.is_current_done = is_interruptible;
         Some(self.show(content))
     }
 
@@ -202,10 +204,8 @@ impl Scheduler {
             }
         } else {
             let next = self.queue.remove(0);
-            if !next.is_live_video() {
-                self.remember(next.clone());
-            }
-            self.is_current_done = next.is_video();
+            self.remember(next.clone());
+            self.is_current_done = next.is_interruptible();
             self.current = Some(next);
         }
 
@@ -226,7 +226,7 @@ impl Scheduler {
     }
 
     fn remember(&mut self, entry: Entry) {
-        if entry.is_announcement() {
+        if entry.is_announcement() || entry.is_interruptible() {
             return;
         }
         self.fallbacks.retain(|fallback| fallback.key != entry.key);
@@ -412,6 +412,18 @@ mod tests {
     }
 
     #[test]
+    fn downloaded_video_is_not_a_fallback() {
+        let mut scheduler = Scheduler::default();
+        scheduler.apply(ScheduleEvent::Arrive(text("a", 1.0)));
+        scheduler.pass_finished(current_play_id(&scheduler));
+        scheduler.apply(ScheduleEvent::Arrive(video("v", 2.0, false)));
+        scheduler.apply(ScheduleEvent::Arrive(text("b", 3.0)));
+
+        let shown = shown_content(scheduler.apply(ScheduleEvent::Remove("b".into())));
+        assert_eq!(shown, Some(Content::Text("a".into())));
+    }
+
+    #[test]
     fn text_edit_applies_from_next_pass() {
         let mut scheduler = Scheduler::default();
         scheduler.apply(ScheduleEvent::Arrive(text("a", 1.0)));
@@ -429,6 +441,50 @@ mod tests {
         scheduler.apply(ScheduleEvent::Arrive(text("a", 1.0)));
         let shown = shown_content(scheduler.apply(ScheduleEvent::Update(announcement("a", 1.0))));
         assert_eq!(shown, Some(Content::Announcement("a".into())));
+    }
+
+    fn downloading(key: &str, timestamp: f64, percent: u8) -> Entry {
+        Entry {
+            key: key.to_string(),
+            timestamp,
+            content: Content::Downloading {
+                url: "https://youtu.be/x".into(),
+                percent,
+            },
+        }
+    }
+
+    #[test]
+    fn download_progress_then_video_replaces_current() {
+        let mut scheduler = Scheduler::default();
+        scheduler.apply(ScheduleEvent::Arrive(downloading("v", 1.0, 0)));
+        let progress =
+            shown_content(scheduler.apply(ScheduleEvent::Update(downloading("v", 1.0, 42))));
+        assert!(matches!(
+            progress,
+            Some(Content::Downloading { percent: 42, .. })
+        ));
+        let shown = shown_content(scheduler.apply(ScheduleEvent::Update(video("v", 1.0, false))));
+        assert!(matches!(shown, Some(Content::Video(_))));
+    }
+
+    #[test]
+    fn download_error_gets_a_full_first_pass() {
+        let mut scheduler = Scheduler::default();
+        scheduler.apply(ScheduleEvent::Arrive(downloading("v", 1.0, 0)));
+        let mut failed = downloading("v", 1.0, 0);
+        failed.content = Content::Error("failed".into());
+        let shown = shown_content(scheduler.apply(ScheduleEvent::Update(failed)));
+        assert_eq!(shown, Some(Content::Error("failed".into())));
+        assert_eq!(scheduler.apply(ScheduleEvent::Arrive(text("b", 2.0))), None);
+    }
+
+    #[test]
+    fn arrival_cuts_download_progress() {
+        let mut scheduler = Scheduler::default();
+        scheduler.apply(ScheduleEvent::Arrive(downloading("v", 1.0, 0)));
+        let shown = shown_content(scheduler.apply(ScheduleEvent::Arrive(text("b", 2.0))));
+        assert_eq!(shown, Some(Content::Text("b".into())));
     }
 
     #[test]

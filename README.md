@@ -12,7 +12,7 @@ to the lantern.
 
 The panel is driven through hzeller's
 [rpi-rgb-led-matrix](https://github.com/hzeller/rpi-rgb-led-matrix) C++ library via the
-`rpi-led-matrix` crate, which compiles the library from source with the build machine's own
+`rpi-led-matrix-sys` crate, which compiles the library from source with the build machine's own
 `make` and `g++`. A plain cross-compile from macOS therefore fails, so `deploy/build.sh`
 builds inside a Debian bookworm ARM64 Docker container (`rust:1.95-bookworm`). Apple Silicon
 runs it natively, and bookworm matches the Pi's OS, so the binary links against the same
@@ -49,8 +49,21 @@ and DMs are not seen.
 
 A Slack message containing a YouTube link plays that video, looping, until something
 newer arrives. A new message cuts a video immediately. The video is downloaded at 240p
-or below with [yt-dlp](https://github.com/yt-dlp/yt-dlp). If the download fails, the
-message text is shown instead.
+or below with [yt-dlp](https://github.com/yt-dlp/yt-dlp).
+
+While it downloads, the lantern shows the progress repeated around it, `42% • 42% • …`,
+updating as it goes. A new message cuts the progress display too; the download carries on
+in the background. If the download fails, yt-dlp's error scrolls in red like a normal
+message, for example `YouTube download failed: Video unavailable`.
+
+Videos over an hour long, and YouTube live streams, are refused with
+`YouTube download failed: the video is over an hour long, or is a live stream`.
+
+At most two downloaded videos are kept: the one playing and the next. They live in
+`/var/cache/led-lantern`, a RAM disk capped at 1.5 GB that only the service can see
+(systemd's `TemporaryFileSystem=`). It takes memory only as files are written, and if it ever
+filled up only that download would fail; the system's own `/run` is never touched. When a third finishes downloading, the oldest is deleted. Because of
+that, videos are never used as fallbacks when a message is deleted; only text messages are.
 
 The service keeps its own yt-dlp binary in `/var/lib/led-lantern/yt-dlp`. It downloads
 it on first start, then runs `yt-dlp --update` on every start and every 24 hours after.
@@ -164,7 +177,8 @@ The lantern runs from an SD card, so the setup script removes the regular writes
   recorded as writes.
 
 The app itself only writes to the card when the power state changes or yt-dlp updates.
-Downloaded YouTube videos and yt-dlp's cache go to `/run/led-lantern`, which is in RAM.
+Downloaded YouTube videos and yt-dlp's cache go to the service's private RAM disk at
+`/var/cache/led-lantern`.
 
 ### Configuration
 
@@ -192,7 +206,7 @@ journalctl -u led-lantern -f
 
 ## Development
 
-On a Mac, the `rpi-led-matrix` crate is built with its `c-stubs` feature, which replaces
+On a Mac, the `rpi-led-matrix-sys` crate is built with its `c-stubs` feature, which replaces
 the C++ library with empty functions. The app compiles and the tests run, but nothing
 reaches a panel.
 

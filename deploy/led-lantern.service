@@ -7,7 +7,7 @@ After=network-online.target mediamtx.service
 EnvironmentFile=/etc/led-lantern/led-lantern.env
 ExecStart=/usr/local/bin/led-lantern
 StateDirectory=led-lantern
-RuntimeDirectory=led-lantern
+TemporaryFileSystem=/var/cache/led-lantern:size=1536M
 Restart=always
 RestartSec=5
 

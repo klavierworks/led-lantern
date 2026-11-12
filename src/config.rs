@@ -33,6 +33,10 @@ pub struct Config {
     #[arg(long, env = "STATE_DIRECTORY", default_value = "/var/lib/led-lantern")]
     pub state_dir: PathBuf,
 
-    #[arg(long, env = "RUNTIME_DIRECTORY", default_value = "/run/led-lantern")]
-    pub runtime_dir: PathBuf,
+    #[arg(
+        long,
+        env = "VIDEO_DIRECTORY",
+        default_value = "/var/cache/led-lantern"
+    )]
+    pub video_dir: PathBuf,
 }

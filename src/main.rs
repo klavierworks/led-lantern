@@ -9,6 +9,7 @@ mod mediamtx;
 mod power;
 mod schedule;
 mod slack;
+mod video_download;
 mod web;
 mod youtube;
 

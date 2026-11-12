@@ -3,6 +3,7 @@ mod font;
 mod frame;
 mod panel;
 pub mod renderer;
+mod repeated_label;
 mod text_scroll;
 mod tiling;
 mod video;

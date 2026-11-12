@@ -2,13 +2,11 @@ use std::time::Duration;
 
 use super::font::Font;
 use super::frame::{Frame, PANEL_WIDTH, Rgb};
+use super::repeated_label::repeated_label_frame;
 use super::{SCROLL_PIXELS_PER_SECOND, TEXT_TOP};
 
 const INTRO: Duration = Duration::from_secs(5);
 const TICKER: Duration = Duration::from_secs(295);
-const WORD: &str = "ANNOUNCEMENT";
-const DOT: &str = "•";
-const MINIMUM_INTRO_GAP: i32 = 30;
 
 pub struct Announcement {
     intro: Frame,
@@ -30,7 +28,7 @@ impl Announcement {
             }
         });
         Self {
-            intro: intro_frame(font),
+            intro: repeated_label_frame(font, "ANNOUNCEMENT", Rgb::BLACK, Rgb::WHITE),
             ticker,
         }
     }
@@ -68,24 +66,6 @@ impl Ticker {
         }
         frame
     }
-}
-
-fn intro_frame(font: &Font) -> Frame {
-    let word_width = font.text_width(WORD);
-    let dot_width = font.text_width(DOT);
-    let panel_width = PANEL_WIDTH as i32;
-    let repeats = (panel_width / (word_width + MINIMUM_INTRO_GAP)).max(1);
-    let period = panel_width / repeats;
-    let baseline = TEXT_TOP + font.baseline();
-
-    let mut frame = Frame::filled(Rgb::WHITE);
-    for repeat in 0..repeats {
-        let x = repeat * period;
-        font.draw(&mut frame, x, baseline, Rgb::BLACK, WORD);
-        let dot_x = x + word_width + (period - word_width - dot_width) / 2;
-        font.draw(&mut frame, dot_x, baseline, Rgb::BLACK, DOT);
-    }
-    frame
 }
 
 #[cfg(test)]

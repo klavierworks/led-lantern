@@ -45,11 +45,11 @@ pub async fn run(config: Config) -> Result<()> {
         mqtt_password,
         web_port,
         state_dir,
-        runtime_dir,
+        video_dir,
     } = config;
     let http = http_client()?;
 
-    let yt_dlp = YtDlp::new(&state_dir, &runtime_dir);
+    let yt_dlp = YtDlp::new(&state_dir, &video_dir);
     yt_dlp.clear_videos().await?;
     tokio::spawn(yt_dlp.clone().keep_updated(http.clone()));
 

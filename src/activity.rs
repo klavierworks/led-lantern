@@ -27,10 +27,10 @@ impl Activity {
         }
         match showing {
             None => Self::Idle,
-            Some(Content::Text(_)) => Self::Message,
+            Some(Content::Text(_) | Content::Error(_)) => Self::Message,
             Some(Content::Announcement(_)) => Self::Announcement,
             Some(Content::Video(source)) if source.is_live => Self::Stream,
-            Some(Content::Video(_)) => Self::YouTube,
+            Some(Content::Video(_) | Content::Downloading { .. }) => Self::YouTube,
         }
     }
 

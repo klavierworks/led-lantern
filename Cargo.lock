@@ -899,7 +899,7 @@ dependencies = [
  "futures-util",
  "regex",
  "reqwest",
- "rpi-led-matrix",
+ "rpi-led-matrix-sys",
  "rumqttc",
  "serde",
  "serde_json",
@@ -1230,16 +1230,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rpi-led-matrix"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dad33d57f9596dd7778b97c962d2b61f12f0a7ba9e6687e97660cbdeabc5b670"
-dependencies = [
- "libc",
- "rpi-led-matrix-sys",
 ]
 
 [[package]]

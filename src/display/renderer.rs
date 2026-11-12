@@ -11,11 +11,14 @@ use super::announcement::Announcement;
 use super::font::Font;
 use super::frame::{Frame, Rgb};
 use super::panel::Panel;
+use super::repeated_label::repeated_label_frame;
 use super::text_scroll::TextScroll;
 use super::video::Video;
 use crate::entry::Content;
 use crate::power::PowerState;
 use crate::schedule::Command;
+
+const MESSAGE_COLOR: Rgb = Rgb::new(255, 128, 0);
 
 pub enum RenderCommand {
     Show(Command),
@@ -24,6 +27,7 @@ pub enum RenderCommand {
 
 enum Program {
     Blank,
+    Still(Frame),
     Text(TextScroll),
     Announcement(Announcement),
     Video(Video),
@@ -131,6 +135,7 @@ fn draw(font: &Font, panel: &mut Panel, blank: &Frame, playing: &mut Playing) ->
     let elapsed = playing.started.elapsed();
     match &mut playing.program {
         Program::Blank => panel.show(blank),
+        Program::Still(frame) => panel.show(frame),
         Program::Announcement(announcement) => panel.show(&announcement.frame_at(font, elapsed)),
         Program::Video(video) => panel.show(video.latest_frame()),
         Program::Text(scroll) => {
@@ -160,7 +165,14 @@ fn start(font: &Font, command: Command) -> Playing {
 
 fn program_for(font: &Font, content: Content) -> Program {
     match content {
-        Content::Text(text) => Program::Text(TextScroll::new(font, &text)),
+        Content::Text(text) => Program::Text(TextScroll::new(font, &text, MESSAGE_COLOR)),
+        Content::Error(text) => Program::Text(TextScroll::new(font, &text, Rgb::new(255, 0, 0))),
+        Content::Downloading { percent, .. } => Program::Still(repeated_label_frame(
+            font,
+            &format!("{percent:>3}%"),
+            MESSAGE_COLOR,
+            Rgb::BLACK,
+        )),
         Content::Announcement(message) => Program::Announcement(Announcement::new(font, &message)),
         Content::Video(source) => Program::Video(Video::start(source)),
     }

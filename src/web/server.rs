@@ -14,9 +14,10 @@ use tracing::{info, warn};
 
 use super::page::{self, Notice, host_without_port};
 use crate::emoji::emoji_to_ascii;
-use crate::entry::{Content, Entry, VideoSource, unix_now};
+use crate::entry::{Content, Entry, unix_now};
 use crate::power::PowerState;
 use crate::schedule::ScheduleEvent;
+use crate::video_download;
 use crate::youtube::YtDlp;
 
 #[derive(Clone)]
@@ -101,7 +102,8 @@ async fn send(State(state): State<WebState>, Form(form): Form<SendForm>) -> Redi
         }
         Kind::Youtube => {
             info!("Web page sent a video link: {text}");
-            tokio::spawn(play_video(state, text));
+            let entry = state.arrive(video_download::initial_content(&state.yt_dlp, &text));
+            video_download::spawn(state.yt_dlp.clone(), entry, state.events.clone());
             Notice::Video
         }
     };
@@ -114,24 +116,16 @@ async fn end_announcement(State(state): State<WebState>) -> Redirect {
     Redirect::to(&format!("/?sent={}", Notice::AnnouncementEnded.query()))
 }
 
-async fn play_video(state: WebState, url: String) {
-    match state.yt_dlp.download(&url).await {
-        Ok(path) => state.arrive(Content::Video(VideoSource {
-            input: path.display().to_string(),
-            is_live: false,
-        })),
-        Err(error) => warn!("Downloading {url} failed: {error:#}"),
-    }
-}
-
 impl WebState {
-    fn arrive(&self, content: Content) {
+    fn arrive(&self, content: Content) -> Entry {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.send(ScheduleEvent::Arrive(Entry {
+        let entry = Entry {
             key: format!("web/{id}"),
             timestamp: unix_now(),
             content,
-        }));
+        };
+        self.send(ScheduleEvent::Arrive(entry.clone()));
+        entry
     }
 
     fn send(&self, event: ScheduleEvent) {

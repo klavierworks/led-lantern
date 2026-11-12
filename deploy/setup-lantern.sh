@@ -29,6 +29,7 @@ echo "Installed $(/usr/local/bin/led-lantern --version)"
 
 step "Configuration"
 sudo install -d -m 700 "$CONFIG_DIR"
+sudo install -d -m 755 /var/cache/led-lantern
 if ! sudo test -f "$ENV_FILE"; then
   sudo install -m 600 "$BUNDLE_DIR/deploy/led-lantern.env.example" "$ENV_FILE"
   echo "Created $ENV_FILE. Fill in the Slack channel and tokens, then run:"

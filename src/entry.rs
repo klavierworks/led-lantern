@@ -3,6 +3,8 @@ pub enum Content {
     Text(String),
     Announcement(String),
     Video(VideoSource),
+    Downloading { url: String, percent: u8 },
+    Error(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -23,12 +25,11 @@ impl Entry {
         matches!(self.content, Content::Announcement(_))
     }
 
-    pub fn is_video(&self) -> bool {
-        matches!(self.content, Content::Video(_))
-    }
-
-    pub fn is_live_video(&self) -> bool {
-        matches!(&self.content, Content::Video(source) if source.is_live)
+    pub fn is_interruptible(&self) -> bool {
+        matches!(
+            self.content,
+            Content::Video(_) | Content::Downloading { .. }
+        )
     }
 }
 
