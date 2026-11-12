@@ -1,0 +1,11 @@
+[Unit]
+Description=MediaMTX streaming server
+Wants=network.target
+
+[Service]
+ExecStart=/usr/local/bin/mediamtx /usr/local/etc/mediamtx.yml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

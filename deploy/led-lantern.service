@@ -1,0 +1,15 @@
+[Unit]
+Description=LED Lantern display
+Wants=network-online.target
+After=network-online.target mediamtx.service
+
+[Service]
+EnvironmentFile=/etc/led-lantern/led-lantern.env
+ExecStart=/usr/local/bin/led-lantern
+StateDirectory=led-lantern
+RuntimeDirectory=led-lantern
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
