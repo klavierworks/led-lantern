@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result, bail};
 
-use super::frame::{Frame, Rgb};
+use super::frame::{Frame, PANEL_WIDTH, Rgb};
 
 const REPLACEMENT_CHARACTER: char = '\u{FFFD}';
 
@@ -18,6 +18,19 @@ struct Glyph {
 pub struct Font {
     glyphs: HashMap<char, Glyph>,
     baseline: i32,
+    widest_glyph: i32,
+}
+
+pub struct TextLayout {
+    characters: Vec<char>,
+    positions: Vec<i32>,
+    width: i32,
+}
+
+impl TextLayout {
+    pub fn width(&self) -> i32 {
+        self.width
+    }
 }
 
 #[derive(Default)]
@@ -86,7 +99,11 @@ impl Font {
         }
 
         let baseline = baseline.context("font has no FONTBOUNDINGBOX")?;
-        Ok(Self { glyphs, baseline })
+        Ok(Self {
+            widest_glyph: widest_glyph(&glyphs),
+            glyphs,
+            baseline,
+        })
     }
 
     pub fn baseline(&self) -> i32 {
@@ -100,30 +117,82 @@ impl Font {
             .sum()
     }
 
-    pub fn draw(&self, frame: &mut Frame, x: i32, baseline_y: i32, color: Rgb, text: &str) -> i32 {
-        let mut cursor = x;
-        for glyph in text.chars().filter_map(|character| self.glyph(character)) {
-            let top = baseline_y - glyph.height - glyph.y_offset;
-            for (row_index, row) in glyph.rows.iter().enumerate() {
-                for column in 0..glyph.row_bits {
-                    if row >> (glyph.row_bits - 1 - column) & 1 == 1 {
-                        frame.set(
-                            cursor + glyph.x_offset + column as i32,
-                            top + row_index as i32,
-                            color,
-                        );
-                    }
-                }
-            }
+    pub fn layout(&self, text: &str) -> TextLayout {
+        let mut characters = Vec::new();
+        let mut positions = Vec::new();
+        let mut cursor = 0;
+        for character in text.chars() {
+            let Some(glyph) = self.glyph(character) else {
+                continue;
+            };
+            characters.push(character);
+            positions.push(cursor);
             cursor += glyph.advance;
         }
-        cursor - x
+        TextLayout {
+            characters,
+            positions,
+            width: cursor,
+        }
+    }
+
+    pub fn draw(&self, frame: &mut Frame, x: i32, baseline_y: i32, color: Rgb, text: &str) {
+        self.draw_layout(frame, x, baseline_y, color, &self.layout(text));
+    }
+
+    pub fn draw_layout(
+        &self,
+        frame: &mut Frame,
+        x: i32,
+        baseline_y: i32,
+        color: Rgb,
+        layout: &TextLayout,
+    ) {
+        let first_visible = layout
+            .positions
+            .partition_point(|&position| x + position + self.widest_glyph <= 0);
+        let visible = layout.characters[first_visible..]
+            .iter()
+            .zip(&layout.positions[first_visible..])
+            .take_while(|&(_, &position)| x + position - self.widest_glyph < PANEL_WIDTH as i32);
+        for (&character, &position) in visible {
+            if let Some(glyph) = self.glyph(character) {
+                draw_glyph(frame, glyph, x + position, baseline_y, color);
+            }
+        }
     }
 
     fn glyph(&self, character: char) -> Option<&Glyph> {
         self.glyphs
             .get(&character)
             .or_else(|| self.glyphs.get(&REPLACEMENT_CHARACTER))
+    }
+}
+
+fn widest_glyph(glyphs: &HashMap<char, Glyph>) -> i32 {
+    glyphs
+        .values()
+        .map(|glyph| {
+            glyph
+                .advance
+                .max(glyph.x_offset.abs() + glyph.row_bits as i32)
+        })
+        .max()
+        .unwrap_or_default()
+}
+
+fn draw_glyph(frame: &mut Frame, glyph: &Glyph, x: i32, baseline_y: i32, color: Rgb) {
+    let top = baseline_y - glyph.height - glyph.y_offset;
+    for (row_index, row) in glyph.rows.iter().enumerate() {
+        for column in 0..glyph.row_bits {
+            if row >> (glyph.row_bits - 1 - column) & 1 == 1 {
+                frame.set(
+                    x + glyph.x_offset + column as i32,
+                    top + row_index as i32,
+                    color,
+                );
+            }
+        }
     }
 }
 
@@ -145,6 +214,8 @@ mod tests {
     use super::*;
     use crate::display::LANTERN_FONT;
 
+    const BASELINE: i32 = 22;
+
     #[test]
     fn parses_lantern_font() {
         let font = Font::parse(LANTERN_FONT).unwrap();
@@ -157,12 +228,30 @@ mod tests {
     fn draws_pixels_for_text() {
         let font = Font::parse(LANTERN_FONT).unwrap();
         let mut frame = Frame::filled(Rgb::BLACK);
-        let width = font.draw(&mut frame, 0, 22, Rgb::WHITE, "I");
-        assert_eq!(width, 10);
+        font.draw(&mut frame, 0, BASELINE, Rgb::WHITE, "I");
         let lit = (0..10)
             .flat_map(|x| (0..32).map(move |y| (x, y)))
             .filter(|&(x, y)| frame.pixel(x, y) == Rgb::WHITE)
             .count();
         assert!(lit > 0);
+    }
+
+    #[test]
+    fn layout_draws_the_same_pixels_as_every_glyph() {
+        let font = Font::parse(LANTERN_FONT).unwrap();
+        let text = "The quick brown fox jumps over the lazy dog. ".repeat(20);
+        let layout = font.layout(&text);
+        for x in [200, 0, -1234, -5000] {
+            let mut expected = Frame::filled(Rgb::BLACK);
+            let mut cursor = x;
+            for character in text.chars() {
+                let glyph = font.glyph(character).unwrap();
+                draw_glyph(&mut expected, glyph, cursor, BASELINE, Rgb::WHITE);
+                cursor += glyph.advance;
+            }
+            let mut actual = Frame::filled(Rgb::BLACK);
+            font.draw_layout(&mut actual, x, BASELINE, Rgb::WHITE, &layout);
+            assert_eq!(actual, expected);
+        }
     }
 }

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::font::Font;
+use super::font::{Font, TextLayout};
 use super::frame::{Frame, PANEL_WIDTH, Rgb};
 use super::repeated_label::repeated_label_frame;
 use super::{SCROLL_PIXELS_PER_SECOND, TEXT_TOP};
@@ -14,16 +14,16 @@ pub struct Announcement {
 }
 
 struct Ticker {
-    unit: String,
+    unit: TextLayout,
     unit_width: i64,
 }
 
 impl Announcement {
     pub fn new(font: &Font, message: &str) -> Self {
         let ticker = (!message.is_empty()).then(|| {
-            let unit = format!("{message}  •  ");
+            let unit = font.layout(&format!("{message}  •  "));
             Ticker {
-                unit_width: i64::from(font.text_width(&unit)),
+                unit_width: i64::from(unit.width()),
                 unit,
             }
         });
@@ -61,7 +61,7 @@ impl Ticker {
         let mut frame = Frame::filled(Rgb::BLACK);
         let baseline = TEXT_TOP + font.baseline();
         while x < panel_width {
-            font.draw(&mut frame, x as i32, baseline, Rgb::WHITE, &self.unit);
+            font.draw_layout(&mut frame, x as i32, baseline, Rgb::WHITE, &self.unit);
             x += self.unit_width;
         }
         frame

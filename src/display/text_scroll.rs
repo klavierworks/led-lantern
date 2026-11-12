@@ -1,19 +1,19 @@
 use std::time::Duration;
 
-use super::font::Font;
+use super::font::{Font, TextLayout};
 use super::frame::{Frame, PANEL_WIDTH, Rgb};
 use super::{SCROLL_PIXELS_PER_SECOND, TEXT_TOP};
 
 pub struct TextScroll {
-    text: String,
+    text: TextLayout,
     color: Rgb,
     pass_length: i64,
 }
 
 impl TextScroll {
     pub fn new(font: &Font, text: &str, color: Rgb) -> Self {
-        let text = format!("{text} ");
-        let pass_length = PANEL_WIDTH as i64 + i64::from(font.text_width(&text));
+        let text = font.layout(&format!("{text} "));
+        let pass_length = PANEL_WIDTH as i64 + i64::from(text.width());
         Self {
             text,
             color,
@@ -29,7 +29,7 @@ impl TextScroll {
         let offset = scrolled_pixels(elapsed) % self.pass_length;
         let x = PANEL_WIDTH as i64 - offset;
         let mut frame = Frame::filled(Rgb::BLACK);
-        font.draw(
+        font.draw_layout(
             &mut frame,
             x as i32,
             TEXT_TOP + font.baseline(),
