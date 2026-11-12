@@ -12,8 +12,11 @@ to the lantern.
 
 The panel is driven through hzeller's
 [rpi-rgb-led-matrix](https://github.com/hzeller/rpi-rgb-led-matrix) C++ library via the
-`rpi-led-matrix` crate, which compiles the library from source. That build uses the Pi's
-own `make` and `g++`, so the app is built on the lantern rather than cross-compiled.
+`rpi-led-matrix` crate, which compiles the library from source with the build machine's own
+`make` and `g++`. A plain cross-compile from macOS therefore fails, so `deploy/build.sh`
+builds inside a Debian bookworm ARM64 Docker container (`rust:1.95-bookworm`). Apple Silicon
+runs it natively, and bookworm matches the Pi's OS, so the binary links against the same
+system libraries. The Pi never compiles anything.
 
 ## What it shows
 
@@ -65,12 +68,35 @@ ffmpeg -re -stream_loop -1 -i input.mov -c:v libx264 -preset ultrafast \
 The service polls the MediaMTX API on `127.0.0.1:9997` once a second to see which streams
 are live. When a stream ends, the panel falls back to the latest Slack message.
 
+### Web page
+
+`http://led-lantern.local/` (port 80) has one text box and three buttons:
+
+- **Show message** queues the text like a Slack message.
+- **Announce** shows the text as an announcement.
+- **Play YouTube video** downloads the link and loops it, like a link posted in Slack.
+
+**End announcement** ends whichever announcement is showing, from Slack or the page. A
+Slack announcement ended this way comes back if the service restarts while the message is
+still in the channel.
+
+The page also shows the ffmpeg command for streaming a video, filled in with the address
+the page was opened on, and a `curl` example for scripts:
+
+```
+curl --data kind=message --data-urlencode text="Hello" http://led-lantern.local/send
+```
+
 ### Home Assistant switch and standby
 
 The lantern announces itself to Home Assistant over MQTT discovery as
 `switch.led_lantern_display`, using the same topics as the old Node script, so existing
 automations keep working. The broker is set with `MQTT_HOST`. Without it there is no switch
 and the display stays on.
+
+It also publishes `sensor.led_lantern_activity`, an enum sensor whose state is what the
+lantern is doing: `Idle` (nothing to show), `Message`, `Announcement`, `YouTube`, `Stream`
+(a live MediaMTX stream) or `Off` (switched off).
 
 Switching it off is the overnight standby, and goes as low as software can:
 
@@ -95,19 +121,19 @@ there is a seam where the last partial tile meets the first.
 
 ## Setting up a lantern
 
-From a Mac with SSH access to the lantern:
+From a Mac with Docker Desktop running and SSH access to the lantern:
 
 ```
 deploy/deploy.sh random@led-lantern.local
 ```
 
-This copies the repo to `~/led-lantern` on the lantern and runs
-`deploy/setup-lantern.sh` there. The setup script can also be run directly on a lantern
-after cloning the repo. It is safe to re-run. It:
+This builds the binary with `deploy/build.sh`, copies it and the `deploy/` folder to
+`~/led-lantern` on the lantern, and runs `deploy/setup-lantern.sh` there. The first build
+downloads the Rust image and all crates; later builds reuse a Docker volume for the crates
+and `target/lantern` for compiled code. The setup script is safe to re-run. It:
 
 1. Installs ffmpeg with apt.
-2. Installs Rust with rustup if it's missing, then builds and installs
-   `/usr/local/bin/led-lantern`.
+2. Installs the binary as `/usr/local/bin/led-lantern`.
 3. Creates `/etc/led-lantern/led-lantern.env` from `deploy/led-lantern.env.example` if
    it doesn't exist.
 4. Installs MediaMTX `v1.6.0` if it's missing, and turns on its API, bound to localhost only.
@@ -139,7 +165,6 @@ The lantern runs from an SD card, so the setup script removes the regular writes
 
 The app itself only writes to the card when the power state changes or yt-dlp updates.
 Downloaded YouTube videos and yt-dlp's cache go to `/run/led-lantern`, which is in RAM.
-Building the app during setup does write to the card, but that only happens on deploy.
 
 ### Configuration
 
@@ -154,6 +179,7 @@ Building the app during setup does write to the card, but that only happens on d
 | `MQTT_PORT` | Defaults to `1883` |
 | `MQTT_USERNAME` | Defaults to `led-lantern` |
 | `MQTT_PASSWORD` | Broker password |
+| `WEB_PORT` | Port for the web page. Defaults to `80` |
 | `RUST_LOG` | Log level, e.g. `info` or `debug` |
 
 After editing it: `sudo systemctl restart led-lantern`.

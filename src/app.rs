@@ -1,20 +1,25 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use tokio::signal::unix::{SignalKind, signal};
-use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 use tracing::{info, warn};
 
+use crate::activity::Activity;
 use crate::config::Config;
 use crate::display::renderer::{self, RenderCommand};
-use crate::home_assistant::{self, MqttSettings};
+use crate::entry::Content;
+use crate::home_assistant::{self, MqttSettings, Watches};
 use crate::mediamtx;
 use crate::power::{self, PowerState};
 use crate::schedule::{Command, ScheduleEvent, Scheduler};
 use crate::slack::feed::{self, FeedSettings};
+use crate::web::server::{self as web, WebState};
 use crate::youtube::YtDlp;
 
 struct Inputs {
@@ -23,46 +28,47 @@ struct Inputs {
     power_requests: UnboundedReceiver<PowerState>,
 }
 
-struct Power {
-    sender: watch::Sender<PowerState>,
-    file: PathBuf,
+struct Status {
+    power: watch::Sender<PowerState>,
+    power_file: PathBuf,
+    activity: watch::Sender<Activity>,
 }
 
 pub async fn run(config: Config) -> Result<()> {
-    let http = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .read_timeout(Duration::from_secs(30))
-        .build()
-        .context("creating the HTTP client")?;
+    let Config {
+        slack_channel,
+        slack_bot_token,
+        slack_app_token,
+        mqtt_host,
+        mqtt_port,
+        mqtt_username,
+        mqtt_password,
+        web_port,
+        state_dir,
+        runtime_dir,
+    } = config;
+    let http = http_client()?;
 
-    let yt_dlp = YtDlp::new(&config.state_dir, &config.runtime_dir);
+    let yt_dlp = YtDlp::new(&state_dir, &runtime_dir);
     yt_dlp.clear_videos().await?;
     tokio::spawn(yt_dlp.clone().keep_updated(http.clone()));
 
-    let power_file = config.state_dir.join("power-state");
-    let initial_power = power::load(&power_file).unwrap_or_else(|error| {
-        warn!("{error:#}; starting with the display on");
-        PowerState::On
-    });
-    info!("Display is {}", initial_power.command());
+    let power_file = state_dir.join("power-state");
+    let initial_power = load_power(&power_file);
     let (power_sender, power_watch) = watch::channel(initial_power);
     let (power_request_sender, power_requests) = mpsc::unbounded_channel();
-    match config.mqtt_host {
-        Some(host) => {
-            let settings = MqttSettings {
-                host,
-                port: config.mqtt_port,
-                username: config.mqtt_username,
-                password: config.mqtt_password,
-            };
-            tokio::spawn(home_assistant::run(
-                settings,
-                power_watch,
-                power_request_sender,
-            ));
-        }
-        None => info!("No MQTT host, so there is no Home Assistant switch"),
-    }
+    let mqtt_settings = mqtt_host.map(|host| MqttSettings {
+        host,
+        port: mqtt_port,
+        username: mqtt_username,
+        password: mqtt_password,
+    });
+    let (activity_sender, activity_watch) = watch::channel(Activity::of(initial_power, None));
+    let watches = Watches {
+        power: power_watch.clone(),
+        activity: activity_watch,
+    };
+    spawn_home_assistant(mqtt_settings, watches, power_request_sender);
 
     let (render_sender, render_receiver) = std::sync::mpsc::channel();
     let (pass_sender, finished_passes) = mpsc::unbounded_channel();
@@ -70,16 +76,17 @@ pub async fn run(config: Config) -> Result<()> {
 
     let (event_sender, events) = mpsc::unbounded_channel();
     let feed_settings = FeedSettings {
-        channel: config.slack_channel,
-        bot_token: config.slack_bot_token,
-        app_token: config.slack_app_token,
+        channel: slack_channel,
+        bot_token: slack_bot_token,
+        app_token: slack_app_token,
     };
-    tokio::spawn(feed::run(
+    spawn_feed(
         feed_settings,
         http.clone(),
-        yt_dlp,
+        yt_dlp.clone(),
         event_sender.clone(),
-    ));
+    );
+    spawn_web_page(web_port, yt_dlp, power_watch, event_sender.clone());
     tokio::spawn(mediamtx::watch_streams(http, event_sender));
 
     let inputs = Inputs {
@@ -87,11 +94,12 @@ pub async fn run(config: Config) -> Result<()> {
         finished_passes,
         power_requests,
     };
-    let power = Power {
-        sender: power_sender,
-        file: power_file,
+    let status = Status {
+        power: power_sender,
+        power_file,
+        activity: activity_sender,
     };
-    dispatch(inputs, power, &render_sender).await?;
+    dispatch(inputs, status, &render_sender).await?;
 
     info!("Shutting down");
     drop(render_sender);
@@ -100,19 +108,74 @@ pub async fn run(config: Config) -> Result<()> {
         .map_err(|_| anyhow!("the renderer thread panicked"))?
 }
 
+fn http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(30))
+        .build()
+        .context("creating the HTTP client")
+}
+
+fn load_power(power_file: &Path) -> PowerState {
+    let power = power::load(power_file).unwrap_or_else(|error| {
+        warn!("{error:#}; starting with the display on");
+        PowerState::On
+    });
+    info!("Display is {}", power.command());
+    power
+}
+
+fn spawn_home_assistant(
+    settings: Option<MqttSettings>,
+    watches: Watches,
+    power_requests: UnboundedSender<PowerState>,
+) {
+    match settings {
+        Some(settings) => {
+            tokio::spawn(home_assistant::run(settings, watches, power_requests));
+        }
+        None => info!("No MQTT host, so there is no Home Assistant switch"),
+    }
+}
+
+fn spawn_feed(
+    settings: FeedSettings,
+    http: reqwest::Client,
+    yt_dlp: YtDlp,
+    events: UnboundedSender<ScheduleEvent>,
+) {
+    tokio::spawn(feed::run(settings, http, yt_dlp, events));
+}
+
+fn spawn_web_page(
+    port: u16,
+    yt_dlp: YtDlp,
+    power_watch: watch::Receiver<PowerState>,
+    events: UnboundedSender<ScheduleEvent>,
+) {
+    let state = WebState {
+        events,
+        yt_dlp,
+        power: power_watch,
+        next_id: Arc::new(AtomicU64::new(0)),
+    };
+    tokio::spawn(web::run(port, state));
+}
+
 async fn dispatch(
     mut inputs: Inputs,
-    power: Power,
+    status: Status,
     render_sender: &Sender<RenderCommand>,
 ) -> Result<()> {
     let mut scheduler = Scheduler::default();
+    let mut showing = None;
     let mut terminate = signal(SignalKind::terminate()).context("listening for SIGTERM")?;
     let mut interrupt = signal(SignalKind::interrupt()).context("listening for SIGINT")?;
     loop {
         let render_command = tokio::select! {
             Some(event) = inputs.events.recv() => scheduler.apply(event).map(RenderCommand::Show),
             Some(play_id) = inputs.finished_passes.recv() => scheduler.pass_finished(play_id).map(RenderCommand::Show),
-            Some(requested) = inputs.power_requests.recv() => switch_power(&power.sender, &power.file, requested),
+            Some(requested) = inputs.power_requests.recv() => switch_power(&status.power, &status.power_file, requested),
             _ = terminate.recv() => return Ok(()),
             _ = interrupt.recv() => return Ok(()),
         };
@@ -120,10 +183,30 @@ async fn dispatch(
             continue;
         };
         log_render_command(&render_command);
+        if let RenderCommand::Show(command) = &render_command {
+            showing = shown_content(command);
+        }
+        update_activity(&status, showing.as_ref());
         if render_sender.send(render_command).is_err() {
             return Ok(());
         }
     }
+}
+
+fn shown_content(command: &Command) -> Option<Content> {
+    match command {
+        Command::Show { content, .. } => Some(content.clone()),
+        Command::Blank => None,
+    }
+}
+
+fn update_activity(status: &Status, showing: Option<&Content>) {
+    let activity = Activity::of(*status.power.borrow(), showing);
+    status.activity.send_if_modified(|current| {
+        let is_changed = *current != activity;
+        *current = activity;
+        is_changed
+    });
 }
 
 fn switch_power(

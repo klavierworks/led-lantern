@@ -27,6 +27,9 @@ pub struct Config {
     #[arg(long, env = "MQTT_PASSWORD", hide_env_values = true)]
     pub mqtt_password: Option<String>,
 
+    #[arg(long, env = "WEB_PORT", default_value_t = 80)]
+    pub web_port: u16,
+
     #[arg(long, env = "STATE_DIRECTORY", default_value = "/var/lib/led-lantern")]
     pub state_dir: PathBuf,
 

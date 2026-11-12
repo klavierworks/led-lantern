@@ -12,6 +12,7 @@ pub enum ScheduleEvent {
     Arrive(Entry),
     Update(Entry),
     Remove(String),
+    EndAnnouncement,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -42,6 +43,7 @@ impl Scheduler {
             ScheduleEvent::Arrive(entry) => self.arrive(entry),
             ScheduleEvent::Update(entry) => self.update(entry),
             ScheduleEvent::Remove(key) => self.remove(&key),
+            ScheduleEvent::EndAnnouncement => self.end_announcement(),
         }
     }
 
@@ -146,6 +148,11 @@ impl Scheduler {
         self.advance(Reason::Changed)
     }
 
+    fn end_announcement(&mut self) -> Option<Command> {
+        let key = self.announcement.as_ref()?.key.clone();
+        self.remove(&key)
+    }
+
     fn activate_announcement(&mut self, entry: Entry) -> Option<Command> {
         if self
             .announcement
@@ -231,7 +238,7 @@ impl Scheduler {
             .fallbacks
             .iter()
             .enumerate()
-            .min_by(|(_, a), (_, b)| a.timestamp.total_cmp(&b.timestamp))
+            .min_by(|(_, first), (_, second)| first.timestamp.total_cmp(&second.timestamp))
             .map(|(index, _)| index)
         {
             self.fallbacks.remove(oldest_index);
@@ -241,7 +248,7 @@ impl Scheduler {
     fn newest_fallback(&self) -> Option<Entry> {
         self.fallbacks
             .iter()
-            .max_by(|a, b| a.timestamp.total_cmp(&b.timestamp))
+            .max_by(|first, second| first.timestamp.total_cmp(&second.timestamp))
             .cloned()
     }
 
@@ -349,6 +356,16 @@ mod tests {
 
         let shown = shown_content(scheduler.apply(ScheduleEvent::Remove("x".into())));
         assert_eq!(shown, Some(Content::Text("a".into())));
+    }
+
+    #[test]
+    fn ending_announcement_returns_to_messages() {
+        let mut scheduler = Scheduler::default();
+        scheduler.apply(ScheduleEvent::Arrive(text("a", 1.0)));
+        scheduler.apply(ScheduleEvent::Arrive(announcement("x", 2.0)));
+        let shown = shown_content(scheduler.apply(ScheduleEvent::EndAnnouncement));
+        assert_eq!(shown, Some(Content::Text("a".into())));
+        assert_eq!(scheduler.apply(ScheduleEvent::EndAnnouncement), None);
     }
 
     #[test]

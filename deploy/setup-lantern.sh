@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUNDLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_DIR=/etc/led-lantern
 ENV_FILE=$CONFIG_DIR/led-lantern.env
 MEDIAMTX_VERSION=v1.6.0
@@ -23,20 +23,14 @@ if ! command -v ffmpeg >/dev/null; then
 fi
 ffmpeg -version | head -1
 
-step "Rust"
-if [ ! -x "$HOME/.cargo/bin/cargo" ]; then
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-fi
-"$HOME/.cargo/bin/rustup" update stable
-
-step "Building led-lantern"
-(cd "$REPO_DIR" && "$HOME/.cargo/bin/cargo" build --release --locked)
-sudo install -m 755 "$REPO_DIR/target/release/led-lantern" /usr/local/bin/led-lantern
+step "led-lantern"
+sudo install -m 755 "$BUNDLE_DIR/led-lantern" /usr/local/bin/led-lantern
+echo "Installed $(/usr/local/bin/led-lantern --version)"
 
 step "Configuration"
 sudo install -d -m 700 "$CONFIG_DIR"
 if ! sudo test -f "$ENV_FILE"; then
-  sudo install -m 600 "$REPO_DIR/deploy/led-lantern.env.example" "$ENV_FILE"
+  sudo install -m 600 "$BUNDLE_DIR/deploy/led-lantern.env.example" "$ENV_FILE"
   echo "Created $ENV_FILE. Fill in the Slack channel and tokens, then run:"
   echo "  sudo systemctl restart led-lantern"
 fi
@@ -54,7 +48,7 @@ if [ ! -x /usr/local/bin/mediamtx ]; then
   rm -rf "$download_dir"
 fi
 sudo sed -i -E 's/^api: no$/api: yes/; s/^apiAddress: .*/apiAddress: 127.0.0.1:9997/' "$MEDIAMTX_CONFIG"
-sudo install -m 644 "$REPO_DIR/deploy/mediamtx.service" /etc/systemd/system/mediamtx.service
+sudo install -m 644 "$BUNDLE_DIR/deploy/mediamtx.service" /etc/systemd/system/mediamtx.service
 
 step "LED timing"
 if ! grep -q 'isolcpus=3' "$BOOT_CMDLINE"; then
@@ -68,7 +62,7 @@ fi
 
 step "SD card writes"
 sudo install -d /etc/systemd/journald.conf.d
-sudo install -m 644 "$REPO_DIR/deploy/journald.conf" /etc/systemd/journald.conf.d/led-lantern.conf
+sudo install -m 644 "$BUNDLE_DIR/deploy/journald.conf" /etc/systemd/journald.conf.d/led-lantern.conf
 sudo systemctl restart systemd-journald
 echo "System log kept in RAM only"
 if systemctl is-enabled --quiet dphys-swapfile.service 2>/dev/null; then
@@ -119,7 +113,7 @@ else
 fi
 
 step "Services"
-sudo install -m 644 "$REPO_DIR/deploy/led-lantern.service" /etc/systemd/system/led-lantern.service
+sudo install -m 644 "$BUNDLE_DIR/deploy/led-lantern.service" /etc/systemd/system/led-lantern.service
 sudo systemctl daemon-reload
 sudo systemctl enable mediamtx.service led-lantern.service
 sudo systemctl restart mediamtx.service led-lantern.service

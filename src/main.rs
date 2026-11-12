@@ -1,12 +1,15 @@
+mod activity;
 mod app;
 mod config;
 mod display;
+mod emoji;
 mod entry;
 mod home_assistant;
 mod mediamtx;
 mod power;
 mod schedule;
 mod slack;
+mod web;
 mod youtube;
 
 use std::io::IsTerminal;

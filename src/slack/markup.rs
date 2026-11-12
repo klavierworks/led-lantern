@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 
-use super::emoji::emoji_to_ascii;
+use crate::emoji::emoji_to_ascii;
 
 static USER_MENTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<@([A-Z0-9]+)(?:\|[^>]*)?>").expect("valid regex"));
