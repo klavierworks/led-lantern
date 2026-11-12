@@ -17,8 +17,14 @@ impl Panel {
         options.set_cols(MATRIX_COLUMNS as u32);
         options.set_chain_length(MATRIX_CHAIN_LENGTH as u32);
         options.set_hardware_mapping("adafruit-hat-pwm");
+        // The rpi-led-matrix crate's defaults differ from the C++ library's; these restore the C++ ones.
+        options.set_pwm_lsb_nanoseconds(130);
+        options.set_pwm_dither_bits(0);
+        options.set_hardware_pulsing(true);
+        options.set_refresh_rate(false);
 
         let mut runtime_options = LedRuntimeOptions::new();
+        runtime_options.set_gpio_slowdown(2);
         runtime_options.set_drop_privileges(false);
 
         let matrix = LedMatrix::new(Some(options), Some(runtime_options))
